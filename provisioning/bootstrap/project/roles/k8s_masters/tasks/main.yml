@@ -1,0 +1,196 @@
+---
+- name: Allow everything and enable UFW
+  ufw:
+    state: disabled
+    policy: allow
+  ignore_errors: yes
+- copy:
+    src: /home/ubuntu/.ssh/id_rsa
+    dest: /home/labadmin/.ssh/id_rsa
+    owner: labadmin
+    group: labadmin
+    mode: '0600'
+- file:
+    path: /etc/resolv.conf
+    state: absent
+- template:
+    src: resolv.conf.j2
+    dest: /etc/resolv.conf
+    mode: '0644'
+- shell: kubeadm config view
+  register: kubeadm_config
+  ignore_errors: yes
+  changed_when: "kubeadm_config.rc != 0"
+- block:
+  - name: Wait apt lock to clear
+    become: true
+    shell: while sudo fuser /var/lib/dpkg/{{ item }} >/dev/null 2>&1; do sleep 1; done;
+    with_items:
+      - lock
+      - lock-frontend
+  - apt_key:
+      url: "https://packages.cloud.google.com/apt/doc/apt-key.gpg"
+      id: "0x6A030B21BA07F4FB"
+  - apt_repository:
+      repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+      state: present
+  - apt:
+      name:
+        - docker.io
+        - kubelet
+        - kubeadm
+        - kubectl
+        - redis-tools
+        - jq
+        - awscli
+        - httpie
+        - httping
+        - python3-pip
+  - pip:
+      name:
+        - openshift
+        - kubernetes
+      extra_args: --upgrade
+  - get_url:
+      url: https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/linux/cfssl
+      dest: /usr/local/bin/cfssl
+      mode: '0777'
+  - get_url:
+      url: https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/linux/cfssljson
+      dest: /usr/local/bin/cfssljson
+      mode: '0777'
+  - file:
+      path: /etc/cfssl
+      state: directory
+  - copy:
+      src: "{{ item }}"
+      dest: "/etc/cfssl/{{ item }}"
+      owner: root
+      group: root
+      mode: '0644'
+    with_items:
+      - ca-config.json
+      - ca-csr.json
+  - shell:
+      chdir: /etc/cfssl
+      cmd: cfssl gencert -initca -config /etc/cfssl/ca-config.json ca-csr.json | cfssljson -bare ca
+      creates: /etc/cfssl/ca.pem
+  - file:
+      path: /etc/cfssl/ca-key.pem
+      owner: root
+      group: root
+      mode: '0644'
+  - copy:
+      src: daemon.json
+      dest: /etc/docker/daemon.json
+  - file:
+      path: /etc/systemd/system/docker.service.d
+      state: directory
+  - systemd:
+      name: docker
+      state: restarted
+      enabled: yes
+      daemon_reload: yes
+  - user:
+      name: labadmin
+      groups: docker
+  - debug:
+      var: ansible_default_ipv4.address|default(ansible_all_ipv4_addresses[0])
+#   - service:
+#       name: kubelet
+#       state: started
+#       enabled: true
+#   - template:
+#       src: kubeadm.j2
+#       dest: /home/ubuntu/kubeadm.yaml
+#   - shell: kubeadm init --config=/home/ubuntu/kubeadm.yaml
+#     register: kubeadm_init
+#   - file:
+#       path: "/home/{{ item }}/.kube"
+#       state: directory
+#     loop:
+#       - ubuntu
+#       - labadmin
+#   - copy:
+#       remote_src: yes
+#       src: /etc/kubernetes/admin.conf
+#       dest: "/home/{{ item }}/.kube/config"
+#       owner: "{{ item }}"
+#       group: "{{ item }}"
+#     loop:
+#       - ubuntu
+#       - labadmin
+#   - shell: kubectl --kubeconfig /etc/kubernetes/admin.conf create -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+#     register: kubeadm_network
+#   - shell: kubeadm token list | grep authentication | cut -d' ' -f1
+#     register: kubeadm_token
+#   - shell: openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
+#     register: kubeadm_hash
+#   - shell: "redis-cli -h jumpbox.pod.lab hset {{ inventory_hostname }} kubeadm_token {{ kubeadm_token.stdout }}"
+#     register: redis_kubeadm_token
+#   - shell: "redis-cli -h jumpbox.pod.lab hset {{ inventory_hostname }} kubeadm_hash {{ kubeadm_hash.stdout }}"
+#     register: redis_kubeadm_hash
+#   when: kubeadm_config.rc > 0
+
+# - shell: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+
+# - name: Add stable chart repo
+#   community.kubernetes.helm_repository:
+#     name: stable
+#     repo_url: "https://kubernetes-charts.storage.googleapis.com"
+
+# - name: Add AKO incubator chart repo
+#   community.kubernetes.helm_repository:
+#     name: ako
+#     repo_url: "https://avinetworks.github.io/avi-helm-charts/charts/stable/ako"
+
+# - name: "Get the controller details"
+#   uri:
+#     url: "https://{{ inventory_hostname | regex_replace('master1','controller') }}/api/initial-data"
+#     validate_certs: no
+#     status_code: 200
+#   register: result
+#   until: result.status == 200
+#   retries: 600
+#   delay: 10
+
+# - template:
+#     src: "{{ item }}.j2"
+#     dest: "/home/ubuntu/{{ item }}"
+#   loop:
+#     - kuard.yaml
+#     - avinetworks.yaml
+#     - httpbin.yaml
+#     - juice.yaml
+#     - sockshop.yaml
+#     - kubernetes-dashboard.yaml
+#     - hackazon.yaml
+#     - dvwa.yaml
+#     - values.yaml
+
+# - name: Deploy AKO incubator chart with values loaded from template
+#   community.kubernetes.helm:
+#     name: ako
+#     chart_ref: ako/ako
+#     chart_version: 1.2.1
+#     create_namespace: true
+#     release_namespace: avi-system
+#     values: "{{ lookup('template', 'values.yaml.j2') | from_yaml }}"
+#     kubeconfig: /etc/kubernetes/admin.conf
+
+# - name: Create a Deployment by reading the definition from a local file
+#   community.kubernetes.k8s:
+#     state: present
+#     src: "/home/ubuntu/{{ item }}"
+#     namespace: default
+#     kubeconfig: /etc/kubernetes/admin.conf
+#   loop:
+#     - kuard.yaml
+#     - avinetworks.yaml
+#     - httpbin.yaml
+#     - juice.yaml
+#     - sockshop.yaml
+#     - kubernetes-dashboard.yaml
+#     - hackazon.yaml
+#     - dvwa.yaml
+

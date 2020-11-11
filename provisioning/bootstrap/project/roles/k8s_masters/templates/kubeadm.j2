@@ -1,0 +1,8 @@
+---
+apiVersion: kubeadm.k8s.io/v1beta2
+kind: ClusterConfiguration
+clusterName: {{ inventory_hostname | regex_replace('master1.','') | regex_replace('.lab','') }}
+controlPlaneEndpoint: {{ inventory_hostname }}
+kubernetesVersion: stable
+networking:
+  podSubnet: 10.244.0.0/16

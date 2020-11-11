@@ -1,0 +1,11 @@
+vsphere_server = ""
+vsphere_user = ""
+vsphere_password = ""
+lab_admin_password = "r00tpassw0rd"
+pod_count = 2
+id = "labsm01"
+dns_server = ""
+dc = "dc01"
+cluster = "cluster01"
+datastore = "vsan"
+network = "pg-mgmt"
